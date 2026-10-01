@@ -24,6 +24,7 @@ struct Command {
 static struct Command commands[] = {
 	{ "help", "Display this list of commands", mon_help },
 	{ "kerninfo", "Display information about the kernel", mon_kerninfo },
+	{ "backtrace", "Display stack backtrace", mon_backtrace}
 };
 
 /***** Implementations of basic kernel monitor commands *****/
@@ -57,7 +58,39 @@ mon_kerninfo(int argc, char **argv, struct Trapframe *tf)
 int
 mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 {
-	// Your code here.
+    // 获取当前栈帧的 EBP
+    uint32_t *ebp = (uint32_t *)read_ebp();
+    struct Eipdebuginfo info;
+    cprintf("Stack backtrace:\n");
+    
+    // 遍历栈帧链，直到遇到空指针或达到 entry.S 中的边界
+    while (ebp != 0) {
+        // 获取返回地址 (在 ebp + 4 处)
+        uint32_t eip = *(ebp + 1);
+        
+        // 获取参数 (从 ebp + 8 开始，共 5 个)
+        uint32_t args[5];
+        for (int i = 0; i < 5; i++) {
+            args[i] = *(ebp + 2 + i);
+        }
+        
+        // 打印栈帧信息
+        cprintf("  ebp %08x  eip %08x  args", (uint32_t)ebp, eip);
+        for (int i = 0; i < 5; i++) {
+            cprintf(" %08x", args[i]);
+        }
+        cprintf("\n");
+
+        // 查找并打印调试信息
+        debuginfo_eip(eip, &info);
+        cprintf("         %s:%d: ", info.eip_file, info.eip_line);
+        cprintf("%.*s+%d\n", info.eip_fn_namelen, info.eip_fn_name, 
+                    eip - info.eip_fn_addr);
+
+        // 移动到调用者的栈帧
+        // ebp 指向保存的旧 EBP，即调用者的 EBP
+        ebp = (uint32_t *)*ebp;
+    }
 	return 0;
 }
 

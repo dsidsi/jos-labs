@@ -29,6 +29,29 @@ i386_init(void)
 	// Lab 2 memory management initialization functions
 	mem_init();
 
+    // 测试彩色输出
+    // 格式: \33[XYm，X=背景色，Y=前景色，均为十六进制 VGA 颜色码
+    // VGA: 0黑 1蓝 2绿 3青 4红 5品红 6棕/黄 7白
+    //      8暗灰 9亮蓝 A亮绿 B亮青 C亮红 D亮品红 E亮黄 F亮白
+
+    cprintf("\33[04mThis is RED\33[0m\n");      // 黑底红字
+    cprintf("\33[02mThis is GREEN\33[0m\n");    // 黑底绿字
+    cprintf("\33[06mThis is YELLOW\33[0m\n");   // 黑底黄字
+    cprintf("\33[01mThis is BLUE\33[0m\n");     // 黑底蓝字
+    cprintf("\33[05mThis is MAGENTA\33[0m\n");  // 黑底品红字
+    cprintf("\33[03mThis is CYAN\33[0m\n");     // 黑底青字
+    cprintf("\33[07mThis is WHITE\33[0m\n");    // 黑底白字
+
+    // 混合颜色
+    cprintf("\33[04mRed \33[02mGreen \33[01mBlue\33[0m\n");
+
+    // 背景色
+    cprintf("\33[47mWhite on Red\33[0m\n");     // 红底白字
+
+    // 高亮色（VGA 8-F）
+    cprintf("\33[0CmBright Red\33[0m\n");       // 黑底亮红字
+    cprintf("\33[CFmBright White on Bright Red\33[0m\n");  // 亮红底亮白字
+
 	// Drop into the kernel monitor.
 	while (1)
 		monitor(NULL);

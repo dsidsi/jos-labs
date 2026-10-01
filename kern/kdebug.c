@@ -10,6 +10,12 @@ extern const struct Stab __STAB_END__[];	// End of stabs table
 extern const char __STABSTR_BEGIN__[];		// Beginning of string table
 extern const char __STABSTR_END__[];		// End of string table
 
+struct UserStabData {
+	const struct Stab *stabs;
+	const struct Stab *stab_end;
+	const char *stabstr;
+	const char *stabstr_end;
+};
 
 // stab_binsearch(stabs, region_left, region_right, type, addr)
 //
@@ -123,8 +129,16 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 		stabstr = __STABSTR_BEGIN__;
 		stabstr_end = __STABSTR_END__;
 	} else {
-		// Can't search for user-level addresses yet!
-  	        panic("User address");
+		const struct UserStabData *usd = (const struct UserStabData *) USTABDATA;
+
+		// Make sure this memory is valid.
+		// Return -1 if it is not.  Hint: Call user_mem_check.
+		// LAB 3: Your code here.
+
+		stabs = usd->stabs;
+		stab_end = usd->stab_end;
+		stabstr = usd->stabstr;
+		stabstr_end = usd->stabstr_end;	
 	}
 
 	// String table validity checks
@@ -149,6 +163,8 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 	rfun = rfile;
 	stab_binsearch(stabs, &lfun, &rfun, N_FUN, addr);
 
+	uintptr_t ori_addr = addr;
+
 	if (lfun <= rfun) {
 		// stabs[lfun] points to the function name
 		// in the string table, but check bounds just in case.
@@ -169,7 +185,6 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 	// Ignore stuff after the colon.
 	info->eip_fn_namelen = strfind(info->eip_fn_name, ':') - info->eip_fn_name;
 
-
 	// Search within [lline, rline] for the line number stab.
 	// If found, set info->eip_line to the right line number.
 	// If not found, return -1.
@@ -179,7 +194,14 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 	//	Look at the STABS documentation and <inc/stab.h> to find
 	//	which one.
 	// Your code here.
-
+	stab_binsearch(stabs, &lline, &rline, N_SLINE, addr);
+	if (lline <= rline) {
+		// 找到了行号，n_desc 存储了行号值
+		info->eip_line = stabs[rline].n_desc;
+	} else {
+		// 没有找到行号信息
+		info->eip_line = -1;
+	}
 
 	// Search backwards from the line number for the relevant filename
 	// stab.
