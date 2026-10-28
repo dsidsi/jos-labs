@@ -25,6 +25,10 @@ start:
   #   For backwards compatibility with the earliest PCs, physical
   #   address line 20 is tied low, so that addresses higher than
   #   1MB wrap around to zero by default.  This code undoes this.
+  #   启用 A20：
+  #   为了与早期 PC 保持向后兼容，物理地址线 A20 被强制拉低，
+  #   导致超过 1MB 的地址默认回绕到零。这段代码撤销此限制。
+
 seta20.1:
   inb     $0x64,%al               # Wait for not busy
   testb   $0x2,%al
@@ -45,10 +49,14 @@ seta20.2:
   # and segment translation that makes virtual addresses 
   # identical to their physical addresses, so that the 
   # effective memory map does not change during the switch.
-  lgdt    gdtdesc
-  movl    %cr0, %eax
-  orl     $CR0_PE_ON, %eax
-  movl    %eax, %cr0
+  # 使用引导 GDT 从实模式切换到保护模式，
+  # 段地址转换使得虚拟地址与物理地址相同，
+  # 这样在切换过程中有效内存映射不会发生变化。
+
+  lgdt    gdtdesc           # 加载 GDT（全局描述符表）到 GDTR 寄存器
+  movl    %cr0, %eax        # 将 CR0 控制寄存器的值读入 EAX
+  orl     $CR0_PE_ON, %eax  # 将 EAX 的 PE 位（bit 0）置 1
+  movl    %eax, %cr0        # 将修改后的值写回 CR0，启用保护模式
   
   # Jump to next instruction, but in 32-bit code segment.
   # Switches processor into 32-bit mode.

@@ -8,6 +8,87 @@
 
 #include <kern/console.h>
 
+// 在 console.c 顶部添加颜色状态变量
+static uint8_t current_color = 0x07;  // 默认：黑底白字 (0x07)
+static uint8_t default_color = 0x07;   // 默认颜色
+
+// 状态机状态
+#define ANSI_STATE_NORMAL    0
+#define ANSI_STATE_ESC       1
+#define ANSI_STATE_CSI       2
+
+static int ansi_state = ANSI_STATE_NORMAL;
+static int ansi_bg = 0;
+static int ansi_fg = 0;
+static int ansi_param_count = 0;
+
+// 将十六进制字符转为 0-15，非法返回 -1
+static int
+hex_digit(int c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
+// 解析 ANSI 转义序列并更新颜色
+static void __attribute__((noinline))
+parse_ansi_color(int c)
+{
+    switch (ansi_state) {
+        case ANSI_STATE_NORMAL:
+            if (c == 0x1B) {
+                ansi_state = ANSI_STATE_ESC;
+            }
+            break;
+
+        case ANSI_STATE_ESC:
+            if (c == '[') {
+                ansi_state = ANSI_STATE_CSI;
+                ansi_bg = 0;
+                ansi_fg = 0;
+                ansi_param_count = 0;
+            } else {
+                ansi_state = ANSI_STATE_NORMAL;
+            }
+            break;
+
+        case ANSI_STATE_CSI: {
+            int v = hex_digit(c);
+			//cprintf("[CSI c=%d v=%d cnt=%d]\n", c, v, ansi_param_count);  // 调试
+            if (v >= 0) {
+                // 接受 0-9 a-f A-F，作为一位十六进制颜色码
+                if (ansi_param_count == 0) {
+                    ansi_bg = v;
+                } else if (ansi_param_count == 1) {
+                    ansi_fg = v;
+                }
+                ansi_param_count++;
+            } else if (c == 'm') {
+                if (ansi_param_count == 1 && ansi_bg == 0) {
+                    // \33[0m → 重置
+                    current_color = default_color;
+                } else if (ansi_param_count == 2) {
+                    // \33[XYm → 背景 X，前景 Y
+                    current_color = (ansi_bg << 4) | ansi_fg;
+                }
+                // 其他情况（一个非零参数、超过两个参数）视为无效，忽略
+                ansi_state = ANSI_STATE_NORMAL;
+                ansi_param_count = 0;
+            } else {
+                // 非十六进制、非 'm'，丢弃整个序列
+                ansi_state = ANSI_STATE_NORMAL;
+                ansi_param_count = 0;
+            }
+            break;
+        }
+    }
+}
+
 static void cons_intr(int (*proc)(void));
 static void cons_putc(int c);
 
@@ -157,57 +238,68 @@ cga_init(void)
 	crt_pos = pos;
 }
 
-
-
 static void
 cga_putc(int c)
 {
-	// if no attribute given, then use black on white
-	if (!(c & ~0xFF))
-		c |= 0x0700;
+    // 处理 ANSI 转义序列 (ESC 字符 0x1B)
+    if (c == 0x1B) {
+        ansi_state = ANSI_STATE_ESC;
+        return;
+    }
+    
+    // 如果正在解析 ANSI 序列
+    if (ansi_state != ANSI_STATE_NORMAL) {
+        parse_ansi_color(c);
+        return;
+    }
+    
+    // 如果没有颜色属性，使用当前颜色
+    if (!(c & ~0xFF)) {
+        c |= (current_color << 8);
+    }
 
-	switch (c & 0xff) {
-	case '\b':
-		if (crt_pos > 0) {
-			crt_pos--;
-			crt_buf[crt_pos] = (c & ~0xff) | ' ';
+    switch (c & 0xff) {
+    case '\b':
+        if (crt_pos > 0) {
+            crt_pos--;
+            crt_buf[crt_pos] = (c & ~0xff) | ' ';
+        }
+        break;
+    case '\n':
+        crt_pos += CRT_COLS;
+        /* fallthru */
+    case '\r':
+        crt_pos -= (crt_pos % CRT_COLS);
+        break;
+	case '\t': {
+		// 使用当前颜色输出空格
+		int spaces = 4 - (crt_pos % 4);
+		for (int i = 0; i < spaces; i++) {
+			cga_putc(' ' | (current_color << 8));
 		}
 		break;
-	case '\n':
-		crt_pos += CRT_COLS;
-		/* fallthru */
-	case '\r':
-		crt_pos -= (crt_pos % CRT_COLS);
-		break;
-	case '\t':
-		cons_putc(' ');
-		cons_putc(' ');
-		cons_putc(' ');
-		cons_putc(' ');
-		cons_putc(' ');
-		break;
-	default:
-		crt_buf[crt_pos++] = c;		/* write the character */
-		break;
 	}
+    default:
+        crt_buf[crt_pos++] = c;
+        break;
+    }
 
-	// What is the purpose of this?
-	if (crt_pos >= CRT_SIZE) {
-		int i;
+    // 滚动逻辑（保持不变）
+    if (crt_pos >= CRT_SIZE) {
+        int i;
+        memmove(crt_buf, crt_buf + CRT_COLS,
+                (CRT_SIZE - CRT_COLS) * sizeof(uint16_t));
+        for (i = CRT_SIZE - CRT_COLS; i < CRT_SIZE; i++)
+            crt_buf[i] = default_color << 8 | ' ';
+        crt_pos -= CRT_COLS;
+    }
 
-		memmove(crt_buf, crt_buf + CRT_COLS, (CRT_SIZE - CRT_COLS) * sizeof(uint16_t));
-		for (i = CRT_SIZE - CRT_COLS; i < CRT_SIZE; i++)
-			crt_buf[i] = 0x0700 | ' ';
-		crt_pos -= CRT_COLS;
-	}
-
-	/* move that little blinky thing */
-	outb(addr_6845, 14);
-	outb(addr_6845 + 1, crt_pos >> 8);
-	outb(addr_6845, 15);
-	outb(addr_6845 + 1, crt_pos);
+    // 更新光标位置
+    outb(addr_6845, 14);
+    outb(addr_6845 + 1, crt_pos >> 8);
+    outb(addr_6845, 15);
+    outb(addr_6845 + 1, crt_pos);
 }
-
 
 /***** Keyboard input code *****/
 
