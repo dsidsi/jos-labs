@@ -165,6 +165,11 @@ env_init(void)
 	// LAB 3: Your code here.
 	// 设置 envs 数组
 	// 实验 3：请在此处编写代码。
+	int i;
+	for (i = NENV - 1; i >= 0; i--) {
+		envs[i].env_link = env_free_list;
+		env_free_list = &envs[i];
+	}
 
 	// Per-CPU part of the initialization
 	// 初始化中针对每个 CPU 的部分
@@ -260,6 +265,11 @@ env_setup_vm(struct Env *e)
 
 	// LAB 3: Your code here.
 	// 实验 3：请在此处编写代码。
+	e->env_pgdir = (pde_t *) page2kva(p);
+	p->pp_ref++;
+
+	for (i = PDX(UTOP); i < NPDENTRIES; i++)
+		e->env_pgdir[i] = kern_pgdir[i];
 
 	// UVPT maps the env's own page table read-only.
 	// Permissions: kernel R, user R
@@ -385,6 +395,16 @@ region_alloc(struct Env *e, void *va, size_t len)
 	//   region_alloc 会更易于使用。
 	//   你应该将 va 向下对齐，并将 (va + len) 向上对齐。
 	//   （注意边界情况！）
+	uintptr_t start = ROUNDDOWN((uintptr_t) va, PGSIZE);
+	uintptr_t end = ROUNDUP((uintptr_t) va + len, PGSIZE);
+	struct PageInfo *p;
+
+	for (; start < end; start += PGSIZE) {
+		if (!(p = page_alloc(0)))
+			panic("region_alloc: out of memory");
+		if (page_insert(e->env_pgdir, p, (void *) start, PTE_W | PTE_U) < 0)
+			panic("region_alloc: page_insert failed");
+	}
 }
 
 //
@@ -484,6 +504,25 @@ load_icode(struct Env *e, uint8_t *binary)
 
 	// LAB 3: Your code here.
 	// 实验 3：请在此处编写代码。
+	struct Elf *elf = (struct Elf *) binary;
+	struct Proghdr *ph, *eph;
+
+	if (elf->e_magic != ELF_MAGIC)
+		panic("load_icode: invalid ELF");
+
+	lcr3(PADDR(e->env_pgdir));
+
+	ph = (struct Proghdr *) (binary + elf->e_phoff);
+	eph = ph + elf->e_phnum;
+	for (; ph < eph; ph++) {
+		if (ph->p_type != ELF_PROG_LOAD)
+			continue;
+		region_alloc(e, (void *) ph->p_va, ph->p_memsz);
+		memcpy((void *) ph->p_va, binary + ph->p_offset, ph->p_filesz);
+		memset((void *) (ph->p_va + ph->p_filesz), 0, ph->p_memsz - ph->p_filesz);
+	}
+
+	e->env_tf.tf_eip = elf->e_entry;
 
 	// Now map one page for the program's initial stack
 	// at virtual address USTACKTOP - PGSIZE.
@@ -492,6 +531,9 @@ load_icode(struct Env *e, uint8_t *binary)
 
 	// LAB 3: Your code here.
 	// 实验 3：请在此处编写代码。
+	region_alloc(e, (void *) (USTACKTOP - PGSIZE), PGSIZE);
+
+	lcr3(PADDR(kern_pgdir));
 }
 
 //
@@ -512,6 +554,12 @@ env_create(uint8_t *binary, enum EnvType type)
 {
 	// LAB 3: Your code here.
 	// 实验 3：请在此处编写代码。
+	struct Env *e;
+
+	if (env_alloc(&e, 0) < 0)
+		panic("env_create: env_alloc failed");
+	load_icode(e, binary);
+	e->env_type = type;
 }
 
 //
@@ -668,7 +716,13 @@ env_run(struct Env *e)
 
 	// LAB 3: Your code here.
 	// 实验 3：请在此处编写代码。
+	if (curenv && curenv->env_status == ENV_RUNNING)
+		curenv->env_status = ENV_RUNNABLE;
+	curenv = e;
+	e->env_status = ENV_RUNNING;
+	e->env_runs++;
+	lcr3(PADDR(e->env_pgdir));
 
-	panic("env_run not yet implemented");
+	env_pop_tf(&e->env_tf);
 }
 
