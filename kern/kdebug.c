@@ -19,7 +19,6 @@ struct UserStabData {
 	const char *stabstr_end;
 };
 
-
 // stab_binsearch(stabs, region_left, region_right, type, addr)
 //
 //	Some stab types are arranged in increasing order by instruction
@@ -142,6 +141,9 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 		// Make sure this memory is valid.
 		// Return -1 if it is not.  Hint: Call user_mem_check.
 		// LAB 3: Your code here.
+		if (user_mem_check(curenv, usd, sizeof(struct UserStabData),
+				   PTE_U) < 0)
+			return -1;
 
 		stabs = usd->stabs;
 		stab_end = usd->stab_end;
@@ -150,6 +152,12 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 
 		// Make sure the STABS and string table memory is valid.
 		// LAB 3: Your code here.
+		if (user_mem_check(curenv, stabs,
+				   (stab_end - stabs) * sizeof(struct Stab), PTE_U) < 0)
+			return -1;
+		if (user_mem_check(curenv, stabstr, stabstr_end - stabstr,
+				   PTE_U) < 0)
+			return -1;
 	}
 
 	// String table validity checks
@@ -174,6 +182,8 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 	rfun = rfile;
 	stab_binsearch(stabs, &lfun, &rfun, N_FUN, addr);
 
+	uintptr_t ori_addr = addr;
+
 	if (lfun <= rfun) {
 		// stabs[lfun] points to the function name
 		// in the string table, but check bounds just in case.
@@ -194,7 +204,6 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 	// Ignore stuff after the colon.
 	info->eip_fn_namelen = strfind(info->eip_fn_name, ':') - info->eip_fn_name;
 
-
 	// Search within [lline, rline] for the line number stab.
 	// If found, set info->eip_line to the right line number.
 	// If not found, return -1.
@@ -204,7 +213,14 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 	//	Look at the STABS documentation and <inc/stab.h> to find
 	//	which one.
 	// Your code here.
-
+	stab_binsearch(stabs, &lline, &rline, N_SLINE, addr);
+	if (lline <= rline) {
+		// 找到了行号，n_desc 存储了行号值
+		info->eip_line = stabs[rline].n_desc;
+	} else {
+		// 没有找到行号信息
+		info->eip_line = -1;
+	}
 
 	// Search backwards from the line number for the relevant filename
 	// stab.
